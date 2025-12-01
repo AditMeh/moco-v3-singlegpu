@@ -96,6 +96,10 @@ parser.add_argument('--warmup-epochs', default=10, type=int, metavar='N',
                     help='number of warmup epochs')
 parser.add_argument('--crop-min', default=0.08, type=float,
                     help='minimum scale for random cropping (default: 0.08)')
+parser.add_argument('--crop-size', default=224, type=int,
+                    help='size of the resized crop side length (default: 224)')
+parser.add_argument('--use-shared-initial-crop', action='store_true',
+                    help='first crop to a random crop_size*2 square before augmentations (shared between both views)')
 parser.add_argument('--clear-cache-freq', default=10, type=int,
                     help='clear GPU cache every N iterations (default: 10)')
 parser.add_argument('--no-pin-memory', action='store_true',
@@ -191,7 +195,7 @@ def main():
 
     # follow BYOL's augmentation recipe: https://arxiv.org/abs/2006.07733
     augmentation1 = [
-        transforms.RandomResizedCrop(16, scale=(args.crop_min, 1.)),
+        transforms.RandomResizedCrop(args.crop_size, scale=(args.crop_min, 1.)),
         transforms.RandomApply([
             transforms.ColorJitter(0.4, 0.4, 0.2, 0.1)  # not strengthened
         ], p=0.8),
@@ -203,7 +207,7 @@ def main():
     ]
 
     augmentation2 = [
-        transforms.RandomResizedCrop(16, scale=(args.crop_min, 1.)),
+        transforms.RandomResizedCrop(args.crop_size, scale=(args.crop_min, 1.)),
         transforms.RandomApply([
             transforms.ColorJitter(0.4, 0.4, 0.2, 0.1)  # not strengthened
         ], p=0.8),
@@ -215,10 +219,17 @@ def main():
         normalize
     ]
 
+    # Create shared initial crop if enabled
+    shared_initial_crop = None
+    if args.use_shared_initial_crop:
+        # patch_size is set to crop_size, so initial crop will be crop_size * 2
+        shared_initial_crop = moco.loader.SharedInitialCrop(args.crop_size)
+    
     train_dataset = datasets.ImageFolder(
         traindir,
         moco.loader.TwoCropsTransform(transforms.Compose(augmentation1), 
-                                      transforms.Compose(augmentation2)))
+                                      transforms.Compose(augmentation2),
+                                      shared_initial_crop=shared_initial_crop))
 
     # Reduce workers if system has limited RAM
     # Each worker loads images into memory, so too many can cause OOM
