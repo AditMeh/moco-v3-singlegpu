@@ -112,6 +112,9 @@ parser.add_argument('--wandb-name', default=None, type=str,
                     help='wandb run name (default: None)')
 parser.add_argument('--no-wandb', action='store_true',
                     help='disable wandb logging')
+# add a checkpoint directory flag
+parser.add_argument('--checkpoint-dir', default='checkpoints', type=str,
+                    help='directory where checkpoints are saved (default: checkpoints)')
 
 
 def main():
@@ -158,8 +161,6 @@ def main():
 
     # Move model to GPU
     model = model.cuda(args.gpu)
-    print(model)
-
     # Setup optimizer
     if args.optimizer == 'lars':
         optimizer = moco.optimizer.LARS(model.parameters(), args.lr,
@@ -171,18 +172,28 @@ def main():
         
     scaler = torch.amp.GradScaler('cuda')
 
+    # Make checkpoint directory if it doesn't exist
+    if not os.path.exists(args.checkpoint_dir):
+        os.makedirs(args.checkpoint_dir, exist_ok=True)
+
     # optionally resume from a checkpoint
     if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
+        # If path is not absolute, try from checkpoint_dir
+        resume_path = args.resume
+        if not os.path.isfile(resume_path):
+            possible_path = os.path.join(args.checkpoint_dir, args.resume)
+            if os.path.isfile(possible_path):
+                resume_path = possible_path
+        if os.path.isfile(resume_path):
+            print("=> loading checkpoint '{}'".format(resume_path))
             loc = 'cuda:{}'.format(args.gpu)
-            checkpoint = torch.load(args.resume, map_location=loc)
+            checkpoint = torch.load(resume_path, map_location=loc)
             args.start_epoch = checkpoint['epoch']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             scaler.load_state_dict(checkpoint['scaler'])
             print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
+                  .format(resume_path, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
@@ -224,7 +235,7 @@ def main():
     if args.use_shared_initial_crop:
         # patch_size is set to crop_size, so initial crop will be crop_size * 2
         shared_initial_crop = moco.loader.SharedInitialCrop(args.crop_size)
-    
+
     train_dataset = datasets.ImageFolder(
         traindir,
         moco.loader.TwoCropsTransform(transforms.Compose(augmentation1), 
@@ -249,14 +260,15 @@ def main():
         # Clear cache after each epoch to prevent memory buildup
         torch.cuda.empty_cache()
 
-        # save checkpoint
+        # save checkpoint in checkpoint directory
+        checkpoint_filename = os.path.join(args.checkpoint_dir, 'checkpoint_%04d.pth.tar' % epoch)
         save_checkpoint({
             'epoch': epoch + 1,
             'arch': args.arch,
             'state_dict': model.state_dict(),
             'optimizer' : optimizer.state_dict(),
             'scaler': scaler.state_dict(),
-        }, is_best=False, filename='checkpoint_%04d.pth.tar' % epoch)
+        }, is_best=False, filename=checkpoint_filename)
 
     if not args.no_wandb:
         wandb.finish()
@@ -291,9 +303,9 @@ def train(train_loader, model, optimizer, scaler, epoch, args):
 
         images[0] = images[0].cuda(non_blocking=True)
         images[1] = images[1].cuda(non_blocking=True)
-        batch_size = images[0].size(0)
-
+        batch_size = images[0].size(0)    
         # compute output
+
         with torch.amp.autocast('cuda', enabled=True):
             loss = model(images[0], images[1], moco_m)
 
@@ -349,7 +361,8 @@ def train(train_loader, model, optimizer, scaler, epoch, args):
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        best_path = os.path.join(os.path.dirname(filename), 'model_best.pth.tar')
+        shutil.copyfile(filename, best_path)
 
 
 class AverageMeter(object):
