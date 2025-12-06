@@ -160,10 +160,10 @@ class MILClassifier(nn.Module):
         # Extract patches: (B * num_patches, C, patch_size, patch_size)
         patches = self.extract_patches(x)
         
-        # Resize patches to backbone expected size (224x224 for standard ResNet)
-        # The backbone was trained on 224x224 images
-        if self.patch_size != 224:
-            patches = F.interpolate(patches, size=(224, 224), mode='bilinear', align_corners=False)
+        # # Resize patches to backbone expected size (224x224 for standard ResNet)
+        # # The backbone was trained on 224x224 images
+        # if self.patch_size != 224:
+        #     patches = F.interpolate(patches, size=(224, 224), mode='bilinear', align_corners=False)
         
         # Get patch embeddings from frozen backbone
         with torch.no_grad():
